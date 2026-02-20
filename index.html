@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>WGI Strategic Political Risk Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --primary: #2c3e50; --accent: #3498db; --success: #27ae60; --danger: #e74c3c; --warning: #f39c12; }
+        body { font-family: 'Sarabun', sans-serif; background: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .tab-btn { padding: 10px 20px; border: none; background: #eee; cursor: pointer; border-radius: 5px; font-weight: bold; }
+        .tab-btn.active { background: var(--accent); color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .controls { display: flex; gap: 15px; background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px; align-items: center; }
+        .btn-main { background: var(--accent); color: white; border: none; cursor: pointer; padding: 10px 20px; border-radius: 5px; }
+        .chart-container { height: 450px; position: relative; margin-top: 20px; }
+        .ai-insight-box { margin-top: 25px; padding: 20px; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 10px; }
+        .ai-header { display: flex; align-items: center; gap: 10px; font-weight: bold; color: #856404; margin-bottom: 10px; }
+        .insight-item { margin-bottom: 8px; padding-left: 20px; position: relative; border-bottom: 1px solid #fff2af; padding-bottom: 5px; }
+        .dim-layout { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 30px; margin-top: 20px; }
+        .dim-item { margin-bottom: 8px; padding: 12px; background: #f9f9f9; border-radius: 5px; border-left: 4px solid var(--accent); display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🛡️ WGI Strategic Political Risk Dashboard</h2>
+    
+    <div class="controls">
+        <label>เลือกประเทศเป้าหมาย:</label>
+        <select id="targetCountry">
+            <option value="THA" selected>Thailand</option>
+            <option value="VNM">Vietnam</option>
+            <option value="SGP">Singapore</option>
+            <option value="MYS">Malaysia</option>
+            <option value="IDN">Indonesia</option>
+            <option value="PHL">Philippines</option>
+        </select>
+        <button class="btn-main" onclick="refreshAll()">🔄 วิเคราะห์ข้อมูล</button>
+        <span id="loading" style="display:none; color: var(--accent); margin-left:15px;">⏳ กำลังคำนวณข้อมูลอาเซียน...</span>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="openTab(event, 'summary')">Risk Scorecard (vs ASEAN)</button>
+        <button class="tab-btn" onclick="openTab(event, 'trends')">Trend Analysis</button>
+        <button class="tab-btn" onclick="openTab(event, 'dimensions')">WGI 6 Dimensions & AI Insight</button>
+    </div>
+
+    <div id="summary" class="tab-content active">
+        <div class="chart-container"><canvas id="benchChart"></canvas></div>
+    </div>
+
+    <div id="trends" class="tab-content">
+        <div class="chart-container"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div id="dimensions" class="tab-content">
+        <div class="dim-layout">
+            <div class="chart-container"><canvas id="radarChart"></canvas></div>
+            <div id="dimensionList"></div>
+        </div>
+        <div class="ai-insight-box">
+            <div class="ai-header">🤖 AI Strategic Summary Insight</div>
+            <div id="aiInsightContent">กำลังประมวลผลคำแนะนำ...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let charts = {};
+    const indicators = [
+        { id: 'VA.PER.RNK', name: 'Voice & Accountability', desc: 'การมีส่วนร่วมและเสรีภาพ' },
+        { id: 'PV.PER.RNK', name: 'Political Stability', desc: 'เสถียรภาพทางการเมือง' },
+        { id: 'GE.PER.RNK', name: 'Gov. Effectiveness', desc: 'ประสิทธิภาพของรัฐบาล' },
+        { id: 'RQ.PER.RNK', name: 'Regulatory Quality', desc: 'คุณภาพกฎระเบียบ' },
+        { id: 'RL.PER.RNK', name: 'Rule of Law', desc: 'หลักนิติธรรม' },
+        { id: 'CC.PER.RNK', name: 'Control of Corruption', desc: 'การควบคุมคอร์รัปชัน' }
+    ];
+    const aseanGroup = ['THA', 'VNM', 'MYS', 'IDN', 'PHL', 'SGP'];
+
+    function openTab(evt, tabName) {
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabName).classList.add('active');
+        evt.currentTarget.classList.add('active');
+    }
+
+    async function refreshAll() {
+        const country = document.getElementById('targetCountry').value;
+        document.getElementById('loading').style.display = 'inline';
+
+        const dashboardData = [];
+        for (let ind of indicators) {
+            // ดึงข้อมูลประเทศเป้าหมาย
+            const res = await fetch(`https://api.worldbank.org/v2/country/${country}/indicator/${ind.id}?format=json&mrV=5`);
+            const json = await res.json();
+            const history = json[1] ? json[1].reverse() : [];
+            
+            // คำนวณค่าเฉลี่ยอาเซียน (Real-time)
+            let aseanSum = 0;
+            for (let peer of aseanGroup) {
+                const pRes = await fetch(`https://api.worldbank.org/v2/country/${peer}/indicator/${ind.id}?format=json&mrV=1`);
+                const pJson = await pRes.json();
+                aseanSum += pJson[1] ? pJson[1][0].value : 0;
+            }
+
+            dashboardData.push({
+                ...ind,
+                current: history.length ? history[history.length-1].value : 0,
+                history: history,
+                aseanAvg: aseanSum / aseanGroup.length
+            });
+        }
+
+        updateBenchChart(dashboardData);
+        updateTrendChart(dashboardData);
+        updateRadarChart(dashboardData);
+        updateDimensionList(dashboardData);
+        generateAIInsight(dashboardData);
+        
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    function updateBenchChart(data) {
+        const ctx = document.getElementById('benchChart').getContext('2d');
+        if (charts.bench) charts.bench.destroy();
+        charts.bench = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.map(d => d.name),
+                datasets: [
+                    { label: 'คะแนนปัจจุบัน', data: data.map(d => d.current), backgroundColor: '#3498db' },
+                    { label: 'ค่าเฉลี่ย ASEAN', data: data.map(d => d.aseanAvg), backgroundColor: '#bdc3c7' }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
+        });
+    }
+
+    function updateRadarChart(data) {
+        const ctx = document.getElementById('radarChart').getContext('2d');
+        if (charts.radar) charts.radar.destroy();
+        charts.radar = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: data.map(d => d.name),
+                datasets: [{
+                    label: 'Risk Profile',
+                    data: data.map(d => d.current),
+                    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+                    borderColor: '#3498db',
+                    pointBackgroundColor: '#3498db'
+                }]
+            },
+            options: { scales: { r: { min: 0, max: 100 } }, maintainAspectRatio: false }
+        });
+    }
+
+    function updateDimensionList(data) {
+        document.getElementById('dimensionList').innerHTML = data.map(d => `
+            <div class="dim-item">
+                <div><strong>${d.name}</strong><br><small>${d.desc}</small></div>
+                <div style="font-size:1.2em; font-weight:bold; color:var(--accent)">${d.current.toFixed(1)}</div>
+            </div>
+        `).join('');
+    }
+
+    function generateAIInsight(data) {
+        const container = document.getElementById('aiInsightContent');
+        let html = "";
+        
+        data.forEach(d => {
+            const diff = d.current - d.aseanAvg;
+            if (diff < -15) {
+                html += `<div class="insight-item">⚠️ <strong>${d.name}:</strong> ต่ำกว่าค่าเฉลี่ยภูมิภาคอย่างมาก (${diff.toFixed(1)}%) เป็นความเสี่ยงหลักที่นักลงทุนควรระวัง</div>`;
+            }
+            if (d.history.length > 1 && d.current < d.history[d.history.length-2].value - 3) {
+                html += `<div class="insight-item">📉 <strong>Trend Warning:</strong> ด้าน ${d.name} มีแนวโน้มลดลงต่อเนื่อง เสี่ยงต่อเสถียรภาพในอนาคต</div>`;
+            }
+        });
+
+        if (!html) html = "✅ สัญญาณโดยรวมอยู่ในเกณฑ์ปกติเมื่อเทียบกับภูมิภาค";
+        container.innerHTML = html;
+    }
+
+    function updateTrendChart(data) {
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        if (charts.trend) charts.trend.destroy();
+        charts.trend = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data[0].history.map(h => h.date),
+                datasets: data.map((d, i) => ({ label: d.name, data: d.history.map(h => h.value), borderColor: `hsl(${i * 60}, 70%, 50%)`, fill: false }))
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
+        });
+    }
+
+    window.onload = refreshAll;
+</script>
+</body>
+</html>

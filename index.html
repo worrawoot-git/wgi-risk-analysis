@@ -71,12 +71,12 @@
 <script>
     let charts = {};
     const indicators = [
-        { id: 'VA.PER.RNK', name: 'Voice & Accountability', desc: 'การมีส่วนร่วมและเสรีภาพ' },
-        { id: 'PV.PER.RNK', name: 'Political Stability', desc: 'เสถียรภาพทางการเมือง' },
-        { id: 'GE.PER.RNK', name: 'Gov. Effectiveness', desc: 'ประสิทธิภาพของรัฐบาล' },
-        { id: 'RQ.PER.RNK', name: 'Regulatory Quality', desc: 'คุณภาพกฎระเบียบ' },
-        { id: 'RL.PER.RNK', name: 'Rule of Law', desc: 'หลักนิติธรรม' },
-        { id: 'CC.PER.RNK', name: 'Control of Corruption', desc: 'การควบคุมคอร์รัปชัน' }
+        { id: 'GOV_WGI_VA.SC', name: 'Voice & Accountability', desc: 'การมีส่วนร่วมและเสรีภาพ' },
+        { id: 'GOV_WGI_PV.SC', name: 'Political Stability', desc: 'เสถียรภาพทางการเมือง' },
+        { id: 'GOV_WGI_GE.SC', name: 'Gov. Effectiveness', desc: 'ประสิทธิภาพของรัฐบาล' },
+        { id: 'GOV_WGI_RQ.SC', name: 'Regulatory Quality', desc: 'คุณภาพกฎระเบียบ' },
+        { id: 'GOV_WGI_RL.SC', name: 'Rule of Law', desc: 'หลักนิติธรรม' },
+        { id: 'GOV_WGI_CC.SC', name: 'Control of Corruption', desc: 'การควบคุมคอร์รัปชัน' }
     ];
     const aseanGroup = ['THA', 'VNM', 'MYS', 'IDN', 'PHL', 'SGP'];
 
@@ -91,35 +91,39 @@
         const country = document.getElementById('targetCountry').value;
         document.getElementById('loading').style.display = 'inline';
 
-        const dashboardData = [];
-        for (let ind of indicators) {
-            // ดึงข้อมูลประเทศเป้าหมาย
-            const res = await fetch(`https://api.worldbank.org/v2/country/${country}/indicator/${ind.id}?format=json&mrV=5`);
-            const json = await res.json();
-            const history = json[1] ? json[1].reverse() : [];
-            
-            // คำนวณค่าเฉลี่ยอาเซียน (Real-time)
-            let aseanSum = 0;
-            for (let peer of aseanGroup) {
-                const pRes = await fetch(`https://api.worldbank.org/v2/country/${peer}/indicator/${ind.id}?format=json&mrV=1`);
-                const pJson = await pRes.json();
-                aseanSum += pJson[1] ? pJson[1][0].value : 0;
+        try {
+            const dashboardData = [];
+            for (let ind of indicators) {
+                const res = await fetch(`https://api.worldbank.org/v2/country/${country}/indicator/${ind.id}?format=json&mrv=5`);
+                const json = await res.json();
+                const history = json[1] ? json[1].reverse() : [];
+
+                let aseanSum = 0, aseanCount = 0;
+                for (let peer of aseanGroup) {
+                    const pRes = await fetch(`https://api.worldbank.org/v2/country/${peer}/indicator/${ind.id}?format=json&mrv=1`);
+                    const pJson = await pRes.json();
+                    const val = pJson[1] && pJson[1][0] ? pJson[1][0].value : null;
+                    if (val != null) { aseanSum += val; aseanCount++; }
+                }
+
+                const nonNull = history.filter(h => h.value != null);
+                dashboardData.push({
+                    ...ind,
+                    current: nonNull.length ? nonNull[nonNull.length - 1].value : 0,
+                    history: history,
+                    aseanAvg: aseanCount > 0 ? aseanSum / aseanCount : 0
+                });
             }
 
-            dashboardData.push({
-                ...ind,
-                current: history.length ? history[history.length-1].value : 0,
-                history: history,
-                aseanAvg: aseanSum / aseanGroup.length
-            });
+            updateBenchChart(dashboardData);
+            updateTrendChart(dashboardData);
+            updateRadarChart(dashboardData);
+            updateDimensionList(dashboardData);
+            generateAIInsight(dashboardData);
+        } catch (e) {
+            alert('เกิดข้อผิดพลาดในการโหลดข้อมูล: ' + e.message);
         }
 
-        updateBenchChart(dashboardData);
-        updateTrendChart(dashboardData);
-        updateRadarChart(dashboardData);
-        updateDimensionList(dashboardData);
-        generateAIInsight(dashboardData);
-        
         document.getElementById('loading').style.display = 'none';
     }
 
@@ -162,7 +166,7 @@
         document.getElementById('dimensionList').innerHTML = data.map(d => `
             <div class="dim-item">
                 <div><strong>${d.name}</strong><br><small>${d.desc}</small></div>
-                <div style="font-size:1.2em; font-weight:bold; color:var(--accent)">${d.current.toFixed(1)}</div>
+                <div style="font-size:1.2em; font-weight:bold; color:var(--accent)">${Number(d.current ?? 0).toFixed(1)}</div>
             </div>
         `).join('');
     }
@@ -188,11 +192,12 @@
     function updateTrendChart(data) {
         const ctx = document.getElementById('trendChart').getContext('2d');
         if (charts.trend) charts.trend.destroy();
+        if (!data[0] || !data[0].history.length) return;
         charts.trend = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: data[0].history.map(h => h.date),
-                datasets: data.map((d, i) => ({ label: d.name, data: d.history.map(h => h.value), borderColor: `hsl(${i * 60}, 70%, 50%)`, fill: false }))
+                datasets: data.map((d, i) => ({ label: d.name, data: d.history.map(h => h.value), borderColor: `hsl(${i * 60}, 70%, 50%)`, fill: false, spanGaps: true }))
             },
             options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
         });
